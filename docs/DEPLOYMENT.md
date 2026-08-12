@@ -176,12 +176,13 @@ check before cloning, keeps one pasted monorepo from filling the container.
 
 ## Step 2 — create the Render services
 
-`infra/deploy/render.yaml` is a Blueprint declaring both services: the Docker
-web service and the Key Value instance, already wired to each other through
-`REDIS_URL`.
+`render.yaml` is a Blueprint declaring both services: the Docker web service
+and the Key Value instance, already wired to each other through `REDIS_URL`.
+It sits at the repository root because that is the only place Render reads a
+Blueprint from — there is no way to point the dashboard at a nested path.
 
-1. Render dashboard → **New → Blueprint** → pick this repository → select
-   `infra/deploy/render.yaml`.
+1. Render dashboard → **New → Blueprint** → pick this repository. Render finds
+   `render.yaml` on its own.
 2. The apply prompts for every var marked `sync: false`. Fill them in, or leave
    them blank and let `deploy.sh api` push them.
 3. Note the service id (`srv-…`, in the service URL) and create an API key at

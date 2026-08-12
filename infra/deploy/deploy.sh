@@ -12,7 +12,7 @@
 # fastembed rather than sentence-transformers -- see render.yaml.
 #
 # The api stage pushes secrets and triggers a deploy; it does NOT create the
-# service. Create that once from infra/deploy/render.yaml (New -> Blueprint).
+# service. Create that once from render.yaml at the repo root (New -> Blueprint).
 #
 # Usage:
 #   cp infra/deploy/.env.deploy.example .env.deploy   # then fill it in
