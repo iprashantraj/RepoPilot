@@ -22,7 +22,9 @@ venv/
 
 # Env
 .env
-.env.deploy
+# Anchored to the repo root so it covers .bak/.old copies made while migrating
+# hosts, without matching the committed infra/deploy/.env.deploy.example.
+/.env.deploy*
 .env.local
 .env.*.local
 

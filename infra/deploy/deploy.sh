@@ -1,9 +1,18 @@
 #!/usr/bin/env bash
 # One-command deploy of RepoPilot onto free tiers.
 #
-#   API + arq worker + Redis -> Hugging Face Docker Space (2 vCPU / 16 GB free)
-#   Postgres + pgvector      -> whatever DSN you put in .env.deploy (Neon, Supabase)
-#   Next.js web              -> Vercel
+#   API + arq worker    -> Render free web service (512 MB, sleeps when idle)
+#   Redis               -> Render Key Value (free tier)
+#   Postgres + pgvector -> whatever DSN you put in .env.deploy (Neon, Supabase)
+#   Next.js web         -> Vercel
+#
+# Hugging Face Spaces used to host the API, but HF now requires a PRO
+# subscription for Docker Spaces on free hardware (402 on create). Render's
+# free tier needs no card. Its 512 MB is the reason the embedder runs on
+# fastembed rather than sentence-transformers -- see infra/deploy/render.yaml.
+#
+# The api stage pushes secrets and triggers a deploy; it does NOT create the
+# service. Create that once from infra/deploy/render.yaml (New -> Blueprint).
 #
 # Usage:
 #   cp infra/deploy/.env.deploy.example .env.deploy   # then fill it in
@@ -22,14 +31,11 @@ step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 [ -f "$ENV_FILE" ] || die "$ENV_FILE not found — copy infra/deploy/.env.deploy.example"
 set -a; . "./$ENV_FILE"; set +a
 
-for v in HF_TOKEN HF_SPACE POSTGRES_DSN REPOPILOT_SESSION_SECRET WEB_URL; do
+for v in RENDER_API_KEY RENDER_SERVICE_ID POSTGRES_DSN REPOPILOT_SESSION_SECRET WEB_URL API_URL; do
   [ -n "${!v:-}" ] || die "$v is unset in $ENV_FILE"
 done
 [ -n "${GROQ_API_KEY:-}${CEREBRAS_API_KEY:-}${HUGGINGFACE_API_KEY:-}" ] \
   || die "set at least one of GROQ_API_KEY / CEREBRAS_API_KEY / HUGGINGFACE_API_KEY"
-
-SPACE_URL="https://${HF_SPACE/\//-}.hf.space"
-SPACE_URL="$(echo "$SPACE_URL" | tr '[:upper:]' '[:lower:]')"
 stages=("$@"); [ ${#stages[@]} -eq 0 ] && stages=(db api web)
 has() { printf '%s\n' "${stages[@]}" | grep -qx "$1"; }
 
@@ -43,53 +49,47 @@ fi
 
 # ── api ─────────────────────────────────────────────────────────────────────
 if has api; then
-  step "Hugging Face Space: secrets"
-  hf_secret() {
-    [ -n "${2:-}" ] || return 0
-    curl -fsS -X POST "https://huggingface.co/api/spaces/$HF_SPACE/secrets" \
-      -H "Authorization: Bearer $HF_TOKEN" -H "Content-Type: application/json" \
-      -d "$(printf '{"key":"%s","value":%s}' "$1" "$(printf '%s' "$2" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')")" \
-      >/dev/null || die "could not set secret $1 (does the Space $HF_SPACE exist?)"
-    echo "  set $1"
+  step "Render: environment variables"
+  # Render replaces the whole env-var set in one PUT, so this builds the full
+  # array and sends it once. Anything omitted here is dropped from the service.
+  render_api() {
+    method="$1"; path="$2"; shift 2
+    curl -fsS -X "$method" "https://api.render.com/v1$path" \
+      -H "Authorization: Bearer $RENDER_API_KEY" \
+      -H "Content-Type: application/json" "$@"
   }
-  hf_secret POSTGRES_DSN "$POSTGRES_DSN"
-  hf_secret REPOPILOT_SESSION_SECRET "$REPOPILOT_SESSION_SECRET"
-  hf_secret GROQ_API_KEY "${GROQ_API_KEY:-}"
-  hf_secret CEREBRAS_API_KEY "${CEREBRAS_API_KEY:-}"
-  hf_secret HUGGINGFACE_API_KEY "${HUGGINGFACE_API_KEY:-}"
-  hf_secret GITHUB_PAT "${GITHUB_PAT:-}"
-  hf_secret REPOPILOT_ENV production
-  hf_secret REPOPILOT_LOG_LEVEL "${REPOPILOT_LOG_LEVEL:-INFO}"
-  hf_secret REPOPILOT_SESSION_COOKIE_SECURE true
-  hf_secret REPOPILOT_WEB_ORIGINS "$WEB_URL"
+  env_json="$(
+    REPOPILOT_WEB_ORIGINS="$WEB_URL" \
+    REPOPILOT_ENV=production \
+    REPOPILOT_SESSION_COOKIE_SECURE=true \
+    python3 - <<'PY'
+import json, os
 
-  step "Hugging Face Space: push build context"
-  # The Space repo is generated, never committed: HF requires the Dockerfile at
-  # the repo root, and this one belongs under infra/deploy/. Built from
-  # `git archive HEAD`, so uncommitted work is deliberately not deployed.
-  work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
-  git archive HEAD | tar -x -C "$work"
-  cp infra/deploy/Dockerfile.space "$work/Dockerfile"
-  cat > "$work/README.md" <<EOF
----
-title: RepoPilot API
-emoji: 🧭
-colorFrom: indigo
-colorTo: blue
-sdk: docker
-app_port: 7860
-pinned: false
----
+# REDIS_URL is deliberately absent: render.yaml wires it from the Key Value
+# service, and sending it here would overwrite that link with a literal.
+keys = [
+    "POSTGRES_DSN", "REPOPILOT_SESSION_SECRET", "REPOPILOT_WEB_ORIGINS",
+    "REPOPILOT_ENV", "REPOPILOT_SESSION_COOKIE_SECURE", "REPOPILOT_LOG_LEVEL",
+    "GROQ_API_KEY", "CEREBRAS_API_KEY", "HUGGINGFACE_API_KEY", "GITHUB_PAT",
+]
+out = [{"key": k, "value": os.environ[k]} for k in keys if os.environ.get(k)]
+print(json.dumps(out))
+PY
+  )"
+  render_api PUT "/services/$RENDER_SERVICE_ID/env-vars" -d "$env_json" >/dev/null \
+    || die "could not set env vars (is RENDER_SERVICE_ID correct, and the Blueprint applied?)"
+  echo "  set $(printf '%s' "$env_json" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))') variables"
 
-Backend for RepoPilot. Generated by infra/deploy/deploy.sh — do not edit here.
-EOF
-  git -C "$work" init -q -b main
-  git -C "$work" add -A
-  git -C "$work" -c user.email=deploy@repopilot -c user.name=deploy \
-    commit -qm "deploy $(git rev-parse --short HEAD)"
-  git -C "$work" push -q --force \
-    "https://user:$HF_TOKEN@huggingface.co/spaces/$HF_SPACE" main
-  echo "  pushed. Build logs: https://huggingface.co/spaces/$HF_SPACE?logs=build"
+  step "Render: trigger deploy"
+  # Render builds from the connected GitHub repo, so it deploys what is pushed
+  # there -- not the local working tree. Warn rather than deploy something else.
+  if [ -n "$(git status --porcelain)" ]; then
+    echo "  warning: working tree is dirty; Render builds the pushed commit, not these edits" >&2
+  fi
+  deploy_id="$(render_api POST "/services/$RENDER_SERVICE_ID/deploys" -d '{"clearCache":"do_not_clear"}' \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
+  echo "  deploy $deploy_id queued"
+  echo "  logs: https://dashboard.render.com/web/$RENDER_SERVICE_ID/deploys/$deploy_id"
 fi
 
 # ── web ─────────────────────────────────────────────────────────────────────
@@ -105,7 +105,7 @@ if has web; then
     printf '%s' "$2" | vercel env add "$1" production >/dev/null
     echo "  set $1"
   }
-  set_env API_PROXY_TARGET "$SPACE_URL"
+  set_env API_PROXY_TARGET "$API_URL"
   set_env NEXT_PUBLIC_API_BASE_URL "${NEXT_PUBLIC_API_BASE_URL:-}"
   set_env AUTH_SECRET "${AUTH_SECRET:?set AUTH_SECRET in $ENV_FILE}"
   set_env NEXTAUTH_URL "$WEB_URL"
@@ -120,6 +120,7 @@ if has web; then
 fi
 
 step "Done"
-echo "  API: $SPACE_URL/health"
+echo "  API: $API_URL/health"
 echo "  Web: $WEB_URL"
-echo "  First request after a cold Space wakes it — allow ~60s."
+echo "  A free Render service sleeps after 15 min idle; the first request after"
+echo "  that wakes it — allow ~60s."

@@ -1,0 +1,55 @@
+# API image for a Render free web service (512 MB RAM, spins down when idle).
+#
+# Differs from Dockerfile.api in three ways, all forced by the host:
+#   1. The arq worker runs here too, as a second process. Render's free plan has
+#      no background worker type -- that's a paid service -- so one free web
+#      service carries both halves of the queue. See render-start.sh.
+#   2. Redis is external (Render Key Value, free tier). Unlike the Hugging Face
+#      Space this replaced, there is no RAM to spare for a local redis-server.
+#   3. Model weights are downloaded at build time. A free service sleeps after
+#      15 minutes idle, and a cold start that also fetches weights times out the
+#      first request instead of serving it.
+#
+# The 512 MB ceiling is why the embedder runs on fastembed rather than
+# sentence-transformers: torch cost ~2 GB resident on its own.
+#
+# HOME=/app because both fastembed models cache under Path.home().
+
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS build
+
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
+
+WORKDIR /app
+COPY . .
+RUN uv sync --frozen --no-dev --all-packages
+
+FROM python:3.12-slim-bookworm AS runtime
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates git libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    HOME=/app \
+    HF_HOME=/app/.cache/huggingface \
+    PORT=10000
+
+WORKDIR /app
+COPY --from=build /app /app
+COPY infra/deploy/render-start.sh /app/render-start.sh
+RUN chmod +x /app/render-start.sh
+
+# Bake the weights in. Keep these model ids in step with
+# Settings.huggingface_embedding_model and Settings.rerank_model, and the cache
+# dir in step with the one both loaders use (Path.home()/.cache/repopilot).
+RUN python -c "\
+from fastembed import TextEmbedding; \
+TextEmbedding('nomic-ai/nomic-embed-text-v1.5-Q', cache_dir='/app/.cache/repopilot/fastembed')" \
+ && python -c "\
+from fastembed.rerank.cross_encoder import TextCrossEncoder; \
+TextCrossEncoder('Xenova/ms-marco-MiniLM-L-6-v2', cache_dir='/app/.cache/repopilot/fastembed')"
+
+EXPOSE 10000
+CMD ["/app/render-start.sh"]

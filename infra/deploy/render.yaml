@@ -1,0 +1,64 @@
+# Render Blueprint: API + arq worker (one free web service) and Redis.
+#
+# Postgres is NOT here -- Render's free Postgres expires after 30 days, so the
+# database stays external (Neon or Supabase, both carry pgvector and neither
+# expires). POSTGRES_DSN is set by infra/deploy/deploy.sh.
+#
+# Point Render at this file: New -> Blueprint -> pick this repo ->
+# "infra/deploy/render.yaml". Secrets are deliberately `sync: false`, so the
+# first apply prompts for them; after that deploy.sh pushes them over the API.
+#
+# The free plan spins the service down after 15 minutes idle. The first request
+# after that pays a cold start (~40-60s) -- the weights are baked into the image
+# (see Dockerfile.render), so it is container boot, not a download.
+
+services:
+  - type: web
+    name: repopilot-api
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./infra/deploy/Dockerfile.render
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: REPOPILOT_ENV
+        value: production
+      - key: REPOPILOT_SESSION_COOKIE_SECURE
+        value: true
+      - key: REPOPILOT_LOG_LEVEL
+        value: INFO
+      # Both models are ONNX and small; one intra-op thread keeps the arenas
+      # inside the 512 MB the free plan gives us. See render-start.sh.
+      - key: OMP_NUM_THREADS
+        value: 1
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: repopilot-redis
+          property: connectionString
+      # Filled in by deploy.sh (or the Blueprint prompt on first apply).
+      - key: POSTGRES_DSN
+        sync: false
+      - key: REPOPILOT_SESSION_SECRET
+        sync: false
+      - key: REPOPILOT_WEB_ORIGINS
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: CEREBRAS_API_KEY
+        sync: false
+      - key: HUGGINGFACE_API_KEY
+        sync: false
+      - key: GITHUB_PAT
+        sync: false
+
+  - type: keyvalue
+    name: repopilot-redis
+    plan: free
+    region: oregon
+    # arq only needs the queue to outlive a job, not a restart.
+    maxmemoryPolicy: noeviction
+    ipAllowList: []  # private network only -- reachable from the API service

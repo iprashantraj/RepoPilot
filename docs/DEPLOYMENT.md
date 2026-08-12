@@ -97,13 +97,23 @@ Do not expose the API and web on unrelated sites while using cookie sessions. Pr
 
 The topology above assumes paid managed services. This section is the concrete
 plan for a zero-cost first deployment, and the constraints that shape it.
+Everything here is reachable without a credit card.
+
+`infra/deploy/deploy.sh` automates it. This document is why it does what it
+does.
 
 ## What forces the shape
 
-- Embeddings run **in-process** via `sentence-transformers`, which pulls in
-  torch. The API image is roughly 2–3 GB and the process needs about 2 GB of
-  RAM resident. That eliminates every free tier capped at 512 MB (Render free,
-  Fly's smallest shared instance, Railway's trial after credits run out).
+- Embeddings run **in-process** via `fastembed` (ONNX Runtime), not
+  `sentence-transformers`. That is a deployment decision, not a modelling one:
+  both serve the same `nomic-embed-text-v1.5`, but sentence-transformers drags
+  torch in with it — ~2.5 GB of image and ~2 GB resident — which eliminates
+  every free tier capped at 512 MB. The quantized ONNX build (`-Q`) is 0.13 GB,
+  keeps all 768 dimensions and the full 8192-token context, and the reranker
+  already runs on fastembed, so ONNX Runtime is loaded either way.
+- Hugging Face Spaces **is no longer an option**. Docker and Gradio Spaces on
+  free `cpu-basic` now require a PRO subscription; creating one returns
+  `402 Payment Required`. Static Spaces remain free and cannot run this.
 - Redis carries **only the ARQ job queue**. Nothing in it is durable; a restart
   loses in-flight index jobs, which can be re-run.
 - Postgres needs `pgvector`.
@@ -116,26 +126,30 @@ plan for a zero-cost first deployment, and the constraints that shape it.
 | Piece | Where | Free tier |
 |---|---|---|
 | Web (Next.js) | Vercel | Hobby |
-| API + ARQ worker + Redis | One Hugging Face Space (Docker SDK) | 2 vCPU / 16 GB RAM |
+| API + ARQ worker | One Render web service | free: 512 MB, sleeps after 15 min idle |
+| Redis | Render Key Value | free: 25 MB |
 | Postgres + pgvector | Neon | free project |
 
-Hugging Face Spaces is the recommendation because it is the only free tier
-with enough RAM for torch. Redis runs as a third process **inside** the Space
-container rather than as a managed service: Upstash's free tier is metered per
-command, and ARQ polls its queue continuously, so a single idle worker burns
-roughly 5 M commands a month against a 500 K cap. A local `redis-server` costs
-nothing and loses nothing that matters.
+Render because its free tier needs no card and takes a Docker image. Redis is a
+managed Key Value instance rather than a process inside the container — the
+opposite of the Hugging Face layout this replaced — because 512 MB has no room
+to spare. Upstash was rejected for the same reason it always was: its free tier
+meters per command, and ARQ polls its queue continuously, so one idle worker
+burns roughly 5 M commands a month against a 500 K cap. Render's Key Value
+instance is not metered that way.
 
-The Space runs API and worker in one container. Note the BYOK constraint above
-still holds — one API replica — and a single container satisfies it by
-construction.
+Postgres stays on Neon rather than Render because Render's free Postgres
+expires after 30 days.
+
+One service runs API and worker together. The BYOK constraint above still
+holds — one API replica — and a single container satisfies it by construction.
 
 ## Blocking prerequisites
 
 `docs/STATUS.md` records that the accepted spend risks assume a private
 deployment, and that the decision "expires the moment the API is reachable by
-anyone who is not paying for it" — including an unlisted URL. A Space is
-public. Close these two first:
+anyone who is not paying for it" — including an unlisted URL. A Render service
+has a public URL. Close these two first:
 
 - **Finding 3** — `reserve_question` passes `free_limit=None`, so questions are
   unmetered. Pass a limit from settings; the counting code already exists.
@@ -143,148 +157,113 @@ public. Close these two first:
   limit. Add a per-session sliding window as a FastAPI dependency.
 
 **Finding 5** is worth closing at the same time here, for a reason unrelated to
-abuse: the Space has ephemeral disk and a repository is cloned in full before
+abuse: the service has ephemeral disk and a repository is cloned in full before
 `ingestion_max_repo_loc` (200 000) applies. `clone_to_tempdir` already clones
 shallow and single-branch; adding `--filter=blob:none`, or a GitHub API size
 check before cloning, keeps one pasted monorepo from filling the container.
 
 ## Step 1 — Postgres on Neon
 
-1. Create a Neon project in the region nearest the Space (`us-east` is a safe
-   default).
+1. Create a Neon project in the region nearest the API service (`us-west` to
+   match Render's `oregon` default in `render.yaml`).
 2. `CREATE EXTENSION IF NOT EXISTS vector;` on the target database.
 3. Take the pooled connection string. `make_engine` rewrites `postgresql://`
    to `postgresql+psycopg://`, so paste it unchanged and keep `sslmode=require`.
-4. Run migrations from a laptop, once:
+4. `./infra/deploy/deploy.sh db` runs `infra/postgres/init.sql` and
+   `alembic upgrade head` against it.
 
-   ```bash
-   POSTGRES_DSN='<neon-uri>' make db-migrate
-   ```
+## Step 2 — create the Render services
 
-## Step 2 — the Space image
+`infra/deploy/render.yaml` is a Blueprint declaring both services: the Docker
+web service and the Key Value instance, already wired to each other through
+`REDIS_URL`.
 
-The Space needs its own Dockerfile because it runs three processes and listens
-on port 7860. Base it on `Dockerfile.api` and change only the tail:
+1. Render dashboard → **New → Blueprint** → pick this repository → select
+   `infra/deploy/render.yaml`.
+2. The apply prompts for every var marked `sync: false`. Fill them in, or leave
+   them blank and let `deploy.sh api` push them.
+3. Note the service id (`srv-…`, in the service URL) and create an API key at
+   `dashboard.render.com/u/settings#api-keys`.
 
-```dockerfile
-# Dockerfile.space — build context is the repository root
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS build
-ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
-WORKDIR /app
-COPY . .
-RUN uv sync --frozen --no-dev --all-packages
+The image is `infra/deploy/Dockerfile.render`. It differs from `Dockerfile.api`
+in three ways, all forced by the host: the ARQ worker runs alongside uvicorn
+(Render's free plan has no worker type), Redis is external, and both models'
+weights are baked in at build time so a cold start does not also download them.
 
-FROM python:3.12-slim-bookworm AS runtime
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates git libgomp1 redis-server \
-    && rm -rf /var/lib/apt/lists/*
+## Step 3 — deploy
 
-ENV PATH="/app/.venv/bin:$PATH" \
-    PYTHONUNBUFFERED=1 \
-    PORT=7860 \
-    HF_HOME=/app/.cache/huggingface
-
-WORKDIR /app
-COPY --from=build /app /app
-
-# Bake the embedding weights into the image. Without this, every cold start
-# downloads ~250 MB before the first request can be served.
-RUN python -c "from sentence_transformers import SentenceTransformer; \
-    SentenceTransformer('nomic-ai/nomic-embed-text-v1.5', trust_remote_code=True)"
-
-EXPOSE 7860
-CMD ["sh", "-c", "redis-server --daemonize yes --save '' --appendonly no && \
-     arq repopilot_api.jobs.index_repo.WorkerSettings & \
-     exec uvicorn repopilot_api.app:app --app-dir apps/api/src \
-       --host 0.0.0.0 --port ${PORT} --timeout-keep-alive 75"]
+```bash
+cp infra/deploy/.env.deploy.example .env.deploy   # then fill it in
+./infra/deploy/deploy.sh                          # db + api + web
 ```
 
-Two details that matter: `--save '' --appendonly no` keeps Redis in memory only
-(the queue is disposable, and persistence would only add disk churn), and the
-worker needs `--app-dir` semantics too — it resolves `repopilot_api` from the
-installed workspace, so no extra path wiring is required.
+The `api` stage pushes environment variables over the Render API and triggers a
+deploy. Two things to know about it:
 
-The torch CPU index pin in the root `pyproject.toml` already keeps the Linux
-build off the CUDA wheels, so the image stays near 2 GB rather than 6 GB.
+- Render replaces the **whole** env-var set in one `PUT`. The script sends the
+  full array; anything it omits is dropped from the service. `REDIS_URL` is
+  deliberately not in that list — `render.yaml` links it to the Key Value
+  service, and sending a literal would overwrite the link.
+- Render builds the commit **pushed to GitHub**, not the local working tree.
+  The script warns on a dirty tree rather than deploying something else.
 
-## Step 3 — create the Space
-
-1. New Space → SDK **Docker** → visibility **Public** (private Spaces do not
-   get the free CPU tier).
-2. The Space's `README.md` front matter must declare the port:
-
-   ```yaml
-   ---
-   title: RepoPilot API
-   sdk: docker
-   app_port: 7860
-   ---
-   ```
-
-3. Push the repository to the Space remote with `Dockerfile.space` renamed to
-   `Dockerfile`, or keep a thin deploy branch. Expect a 10–20 minute first
-   build.
-4. Set these as **Secrets** (not Variables) in Space settings:
-
-   ```bash
-   REPOPILOT_ENV=production
-   REPOPILOT_SESSION_SECRET=<openssl rand -hex 32>
-   REPOPILOT_SESSION_COOKIE_SECURE=true
-   REPOPILOT_WEB_ORIGINS=https://<project>.vercel.app
-   POSTGRES_DSN=<neon uri>
-   GROQ_API_KEY=<key>
-   CEREBRAS_API_KEY=<key>
-   HUGGINGFACE_API_KEY=<key>
-   ```
-
-   Leave `REDIS_URL` unset — the default `redis://localhost:6379/0` is correct
-   inside the container. `REPOPILOT_ENV=production` makes the settings
-   validator reject a default session secret and a non-secure cookie, so both
-   values above are mandatory, not advisory.
+`REPOPILOT_ENV=production` makes the settings validator reject a default
+session secret and a non-secure cookie, so both are mandatory, not advisory.
 
 ## Step 4 — the web app on Vercel
 
-1. Import the repository, root directory `apps/web`.
-2. Environment:
+Handled by `./infra/deploy/deploy.sh web`, which sets:
 
-   ```bash
-   API_PROXY_TARGET=https://<user>-<space>.hf.space
-   NEXT_PUBLIC_API_BASE_URL=/api
-   REPOPILOT_SESSION_SECRET=<byte-for-byte the same value as the Space>
-   REPOPILOT_SESSION_COOKIE_SECURE=true
-   ```
+```bash
+API_PROXY_TARGET=https://<service>.onrender.com
+NEXT_PUBLIC_API_BASE_URL=/api
+REPOPILOT_SESSION_SECRET=<byte-for-byte the same value as the API>
+REPOPILOT_SESSION_COOKIE_SECURE=true
+```
 
-3. Sign-in is optional. With both `AUTH_GOOGLE_ID` and `AUTH_GITHUB_ID` unset
-   the product runs anonymously. If you set either, also set `AUTH_SECRET` and
-   `NEXTAUTH_URL`, and register the callback URLs listed earlier in this file.
+Sign-in is optional. With both `AUTH_GOOGLE_ID` and `AUTH_GITHUB_ID` unset the
+product runs anonymously. If you set either, also set `AUTH_SECRET` and
+`NEXTAUTH_URL`, and register the callback URLs listed earlier in this file.
 
 Keeping `NEXT_PUBLIC_API_BASE_URL=/api` routes the browser through the Next.js
 rewrite, so everything is same-origin and the cookie needs no cross-site
-exception. The alternative — pointing the browser straight at the Space — works
+exception. The alternative — pointing the browser straight at the API — works
 too, but then `REPOPILOT_WEB_ORIGINS` and the `SameSite=None` cookie path both
 become load-bearing.
 
 ## Step 5 — verify
 
-1. `GET https://<space>.hf.space/health` returns 200.
-2. Space logs show `arq.startup` and no Redis connection error.
+1. `GET https://<service>.onrender.com/health` returns 200.
+2. Render logs show `arq.startup` and no Redis connection error.
 3. Load the Vercel URL, paste a small repository (`pallets/click` is a good
    size), and watch indexing complete — that exercises clone, parse, embed,
    Postgres write, and the ARQ round trip in one go.
 4. Confirm the tour SSE stream renders progressively rather than arriving in
    one block. This is the most likely thing to break: Vercel proxies the
    rewrite through its edge, and a buffered or time-capped proxy shows up here
-   first. If it does break, switch `NEXT_PUBLIC_API_BASE_URL` to the Space URL
+   first. If it does break, switch `NEXT_PUBLIC_API_BASE_URL` to the API URL
    so the browser connects directly, and add that origin to
    `REPOPILOT_WEB_ORIGINS`.
 5. Confirm the free-repository gate and the "connect your Groq key" 402 path.
 
 ## Known ceilings
 
-- A free Space sleeps after about 48 hours idle, and waking it pulls a ~2 GB
-  image, so the first request after a long quiet period is slow.
-- Space storage is ephemeral. Clones and the LLM SQLite cache
-  (`LLM_CACHE_PATH`) do not survive a restart; the index in Postgres does.
+- **512 MB is the binding constraint.** A cold process serving one question
+  sits near 400 MB with both ONNX models resident. Indexing a large repository
+  concurrently is what will push it over. `OMP_NUM_THREADS=1` (set in
+  `render-start.sh`) is part of staying under: ONNX Runtime otherwise sizes its
+  thread pool from the host core count and each intra-op thread carries its own
+  memory arena. If the service still OOM-restarts, the next lever is
+  `BAAI/bge-small-en-v1.5` — but it is 384-dim, so it needs a migration of
+  `chunk_embeddings.embedding` and a full re-index, and its 512-token context
+  truncates the tail of any chunk near the 150-line cap.
+- A free service sleeps after 15 minutes idle. The first request after that
+  pays a container cold start, roughly 40–60s. Weights are baked into the
+  image, so it is boot time, not a download.
+- Render's free tier has a monthly instance-hour budget shared across services.
+  One always-sleeping API fits; two do not.
+- Disk is ephemeral. Clones and the LLM SQLite cache (`LLM_CACHE_PATH`) do not
+  survive a restart; the index in Postgres does.
 - One container means one API replica and one worker. Concurrent indexing of
   two large repositories will contend for CPU with request serving.
 - Neon's free tier suspends an idle database, adding a cold-start delay to the
