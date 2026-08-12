@@ -4,9 +4,14 @@
 # database stays external (Neon or Supabase, both carry pgvector and neither
 # expires). POSTGRES_DSN is set by infra/deploy/deploy.sh.
 #
-# Point Render at this file: New -> Blueprint -> pick this repo ->
-# "infra/deploy/render.yaml". Secrets are deliberately `sync: false`, so the
-# first apply prompts for them; after that deploy.sh pushes them over the API.
+# This lives at the repository root because that is the only place Render
+# reads a Blueprint from -- the same constraint that forced the Hugging Face
+# Dockerfile to the root. Everything else it references stays under
+# infra/deploy/.
+#
+# Point Render at it: New -> Blueprint -> pick this repo. Secrets are
+# deliberately `sync: false`, so the first apply prompts for them; after that
+# deploy.sh pushes them over the API.
 #
 # The free plan spins the service down after 15 minutes idle. The first request
 # after that pays a cold start (~40-60s) -- the weights are baked into the image

@@ -9,7 +9,7 @@
 # Hugging Face Spaces used to host the API, but HF now requires a PRO
 # subscription for Docker Spaces on free hardware (402 on create). Render's
 # free tier needs no card. Its 512 MB is the reason the embedder runs on
-# fastembed rather than sentence-transformers -- see infra/deploy/render.yaml.
+# fastembed rather than sentence-transformers -- see render.yaml.
 #
 # The api stage pushes secrets and triggers a deploy; it does NOT create the
 # service. Create that once from infra/deploy/render.yaml (New -> Blueprint).
