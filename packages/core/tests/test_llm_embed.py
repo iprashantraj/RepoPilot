@@ -13,7 +13,7 @@ from .conftest import make_provider
 
 
 class FakeEmbedder(_BaseClient):
-    """Test double — bypasses the sentence-transformers model load and
+    """Test double — bypasses the fastembed model load and
     returns canned embeddings."""
 
     provider = ProviderName.HUGGINGFACE
@@ -121,3 +121,43 @@ async def test_embed_many_empty_does_not_touch_backend(tmp_settings: Any) -> Non
     with pytest.raises(ValueError, match="batch_size"):
         await provider.embed_many(["text"], batch_size=0)
     await provider.aclose()
+
+
+@pytest.mark.asyncio
+async def test_fastembed_embedder_normalises_raw_vectors() -> None:
+    """fastembed returns raw pooled vectors; the embedder must unit-length them.
+
+    sentence-transformers was called with ``normalize_embeddings=True``, so
+    every vector already in the ``chunk_embeddings`` column is unit-length.
+    fastembed does not normalise, and a silent switch to raw vectors would put
+    two conventions in one column. Guards the ONNX model behind a stub so the
+    test never downloads 130 MB of weights.
+    """
+    import numpy
+
+    from repopilot_core.llm.provider import _FastEmbedEmbedder
+
+    class StubModel:
+        def __init__(self) -> None:
+            self.batch_sizes: list[int] = []
+
+        def embed(self, texts: list[str], batch_size: int) -> Any:
+            self.batch_sizes.append(batch_size)
+            # Raw, decidedly non-unit vectors — norms 5.0 and 26.0.
+            del texts
+            yield numpy.array([3.0, 4.0])
+            yield numpy.array([10.0, 24.0])
+
+    embedder = _FastEmbedEmbedder("stub-model")
+    stub = StubModel()
+    embedder._model = stub  # skip the ONNX load
+
+    binding = ModelBinding(
+        provider=ProviderName.HUGGINGFACE,
+        physical_model="stub-model",
+    )
+    responses = await embedder.embed_many(binding, ["a", "b"], batch_size=4)
+
+    assert [round(sum(x * x for x in r.vector) ** 0.5, 6) for r in responses] == [1.0, 1.0]
+    assert responses[0].vector == pytest.approx([0.6, 0.8])
+    assert stub.batch_sizes == [4]

@@ -1,6 +1,6 @@
 """Slow / integration: full Phase 1 pipeline against the real ``httpx`` repo.
 
-Gated by both ``slow`` (live clone, real Groq calls, sentence-transformers
+Gated by both ``slow`` (live clone, real Groq calls, fastembed
 weights downloaded into the local HF cache on first run) and ``integration``
 (live Postgres). Skipped in the fast CI lane.
 """

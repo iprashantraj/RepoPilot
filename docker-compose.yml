@@ -30,7 +30,7 @@ services:
 
 # No Ollama service. v1 uses:
 #   - Groq → Cerebras → Hugging Face Inference Providers for chat completion
-#   - In-process sentence-transformers (HF weights) for embeddings
+#   - In-process fastembed (ONNX, HF weights) for embeddings
 # See packages/core/src/repopilot_core/llm/provider.py for the wiring.
 
 volumes:

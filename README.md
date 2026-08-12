@@ -90,7 +90,7 @@ flowchart TB
     api -- "SSE events" --> web
 ```
 
-**Stack.** Python 3.12 backend (FastAPI, LangGraph, Pydantic v2, SQLAlchemy, tree-sitter, NetworkX, sentence-transformers), Next.js 15 + React frontend, Postgres with pgvector, Redis for background indexing jobs. Models are reached through one provider layer with an explicit fallback chain — Groq, then Cerebras, then optionally Hugging Face — with SQLite response caching and 429-aware retry budgets.
+**Stack.** Python 3.12 backend (FastAPI, LangGraph, Pydantic v2, SQLAlchemy, tree-sitter, NetworkX, fastembed), Next.js 15 + React frontend, Postgres with pgvector, Redis for background indexing jobs. Models are reached through one provider layer with an explicit fallback chain — Groq, then Cerebras, then optionally Hugging Face — with SQLite response caching and 429-aware retry budgets.
 
 ### The agent graph
 

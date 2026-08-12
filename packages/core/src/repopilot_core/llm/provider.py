@@ -15,9 +15,9 @@ The provider speaks OpenAI-compatible HTTP for Groq, Cerebras, and Hugging
 Face's Inference Providers gateway (https://router.huggingface.co/v1). The
 unified `LLMResponse` shape lets callers stay provider-agnostic.
 
-Embeddings run **in-process** via `sentence-transformers` (Hugging Face
-model weights, no daemon, no HTTP). This is the only embeddings backend in
-v1 — there is no Ollama anywhere.
+Embeddings run **in-process** via `fastembed` (ONNX Runtime, Hugging Face
+model weights, no daemon, no HTTP, no torch). This is the only embeddings
+backend in v1 — there is no Ollama anywhere.
 
 Tests in `packages/core/tests/test_llm_provider.py` cover the five Phase 0
 TDD gates. The forced-429-storm test exercises the real fallback chain end
@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import Any, Self
 
 import httpx
+import numpy
 import structlog
 
 from repopilot_core.llm.models import (
@@ -559,12 +560,19 @@ def _extract_openai_compatible_text(data: dict[str, Any]) -> str:
     raise ProviderError(f"provider response missing assistant text: {data!r}")
 
 
-class _SentenceTransformersEmbedder(_BaseClient):
-    """In-process embedder using sentence-transformers (Hugging Face weights).
+class _FastEmbedEmbedder(_BaseClient):
+    """In-process embedder using fastembed (ONNX Runtime, HF weights).
 
-    No HTTP, no daemon, no Docker. Model weights are downloaded from
-    huggingface.co on first use into the local `huggingface_hub` cache.
-    `nomic-embed-text-v1.5` is 768-dim and matches the existing pgvector schema.
+    No HTTP, no daemon, no Docker, and — unlike sentence-transformers, which
+    this replaced — no torch. torch cost ~2.5 GB of image and ~2 GB resident,
+    which no free host will run; the quantized ONNX build of the same
+    `nomic-embed-text-v1.5` is 0.13 GB. The reranker already runs on fastembed,
+    so ONNX Runtime is loaded either way.
+
+    Still `nomic-embed-text-v1.5`: 768-dim (matches the pgvector schema), 8192
+    token context (so the 150-line chunk cap never truncates), and the same
+    `search_document:` / `search_query:` prefixes the call sites apply.
+    Weights download from huggingface.co on first use.
     """
 
     provider = ProviderName.HUGGINGFACE
@@ -586,9 +594,14 @@ class _SentenceTransformersEmbedder(_BaseClient):
     def _load_model(self) -> Any:
         # Import inside the method so a missing optional dep doesn't blow up
         # import of repopilot_core.
-        from sentence_transformers import SentenceTransformer
+        from fastembed import TextEmbedding
 
-        return SentenceTransformer(self._model_name, trust_remote_code=True)
+        # Same cache dir as the reranker (see rerank/cross_encoder.py):
+        # fastembed defaults to tempfile.gettempdir(), which macOS reaps,
+        # leaving a half-populated snapshot that fails the ONNX load.
+        cache_dir = Path.home() / ".cache" / "repopilot" / "fastembed"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        return TextEmbedding(self._model_name, cache_dir=str(cache_dir))
 
     async def embed(self, binding: ModelBinding, text: str) -> EmbeddingResponse:
         responses = await self.embed_many(binding, [text], batch_size=1)
@@ -604,15 +617,24 @@ class _SentenceTransformersEmbedder(_BaseClient):
         if not texts:
             return []
         model = await self._ensure_loaded()
+
+        def _encode() -> list[list[float]]:
+            # `embed` yields numpy arrays lazily; drain the generator inside the
+            # worker thread so no ONNX work lands on the event loop.
+            #
+            # fastembed returns raw pooled vectors, where sentence-transformers
+            # was called with `normalize_embeddings=True`. Ranking is unaffected
+            # (pgvector compares with `<=>`, cosine), but the stored vectors are
+            # unit-length everywhere else in the system, so normalise here
+            # rather than leave two conventions in the same column.
+            out: list[list[float]] = []
+            for vector in model.embed(list(texts), batch_size=batch_size):
+                norm = float(numpy.linalg.norm(vector))
+                out.append((vector / norm if norm else vector).tolist())
+            return out
+
         async with self._encode_lock:
-            encoded = await asyncio.to_thread(
-                model.encode,
-                list(texts),
-                batch_size=batch_size,
-                normalize_embeddings=True,
-                convert_to_numpy=True,
-            )
-        vectors = encoded.tolist()
+            vectors = await asyncio.to_thread(_encode)
         if len(vectors) != len(texts):
             raise RuntimeError(
                 f"embedding backend returned {len(vectors)} vectors for {len(texts)} texts"
@@ -633,7 +655,7 @@ class _SentenceTransformersEmbedder(_BaseClient):
         messages: Sequence[Message],
         kwargs: dict[str, Any],
     ) -> LLMResponse:
-        raise NotImplementedError("sentence-transformers embedder does not support chat completion")
+        raise NotImplementedError("fastembed embedder does not support chat completion")
 
 
 # ─── LLMProvider ────────────────────────────────────────────────────────────
@@ -647,7 +669,7 @@ class LLMProvider:
     http: httpx.AsyncClient
     cache: _SQLiteCache
     clients: dict[ProviderName, _BaseClient]
-    embedder: _BaseClient  # always sentence-transformers in v1
+    embedder: _BaseClient  # always fastembed in v1
     tokens_used: dict[ModelId, int] = field(default_factory=lambda: defaultdict(int))
 
     # ── construction ───────────────────────────────────────────────────────
@@ -683,7 +705,7 @@ class LLMProvider:
             # Hugging Face Inference Providers (OpenAI-compatible gateway).
             # The chat path uses HF for any model in the resolution chain whose
             # provider is HUGGINGFACE. The embedding path is served separately
-            # by the in-process sentence-transformers embedder below.
+            # by the in-process fastembed embedder below.
             if settings.huggingface_api_key:
                 clients[ProviderName.HUGGINGFACE] = _OpenAICompatibleClient(
                     ProviderName.HUGGINGFACE,
@@ -695,7 +717,7 @@ class LLMProvider:
         # The embedder loads its model lazily on first call; constructing it
         # is cheap. Tests can pass `embedder=` to override.
         if embedder is None:
-            embedder = _SentenceTransformersEmbedder(settings.huggingface_embedding_model)
+            embedder = _FastEmbedEmbedder(settings.huggingface_embedding_model)
         return cls(
             settings=settings,
             http=http,
@@ -842,7 +864,7 @@ class LLMProvider:
         yield response.text
 
     async def embed(self, text: str, *, model: ModelId = ModelId.EMBEDDINGS) -> EmbeddingResponse:
-        """Embed ``text`` via the in-process sentence-transformers embedder.
+        """Embed ``text`` via the in-process fastembed embedder.
 
         No HTTP, no daemon, no Docker. Model weights are downloaded from
         Hugging Face on first use into the local hub cache. Cached by

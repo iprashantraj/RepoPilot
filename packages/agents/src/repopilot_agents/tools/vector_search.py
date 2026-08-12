@@ -1,7 +1,7 @@
 """``vector_search`` — pgvector cosine k-NN over indexed chunks.
 
 Embeds the query through ``LLMProvider.embed()`` (in-process
-sentence-transformers with `nomic-ai/nomic-embed-text-v1.5` in v1)
+fastembed with `nomic-ai/nomic-embed-text-v1.5-Q` in v1)
 so the embedding cache applies automatically. Returns
 ``ChunkHit[]`` with the chunk's ``CodeRef`` and the cosine distance.
 

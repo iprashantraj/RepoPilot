@@ -109,7 +109,7 @@ class FakeStreamingClient(_BaseClient):
 
 
 class FakeEmbedder(_BaseClient):
-    """Test double for the sentence-transformers in-process embedder.
+    """Test double for the fastembed in-process embedder.
 
     Returns deterministic vectors based on text content so embeddings are
     reproducible across runs without loading a real model.

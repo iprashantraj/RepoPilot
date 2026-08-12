@@ -71,11 +71,15 @@ class Settings(BaseSettings):
     huggingface_api_key: str | None = None
     huggingface_base_url: str = "https://router.huggingface.co/v1"
 
-    # Sentence-transformers embedder. Runs in-process; no daemon, no HTTP.
-    # nomic-embed-text-v1.5 is 768-dim and matches the existing pgvector schema.
-    # On first use the model weights are downloaded from huggingface.co into
-    # the local `huggingface_hub` cache (~250MB).
-    huggingface_embedding_model: str = "nomic-ai/nomic-embed-text-v1.5"
+    # fastembed embedder (ONNX Runtime). Runs in-process; no daemon, no HTTP,
+    # no torch. nomic-embed-text-v1.5 is 768-dim and matches the existing
+    # pgvector schema; the `-Q` suffix is the quantized ONNX build of the same
+    # model — 0.13 GB instead of 0.52 GB, which is what fits a free host's
+    # memory. Same 8192-token context, so the 150-line chunk cap never
+    # truncates, and the same `search_document:` / `search_query:` prefixes
+    # (see EMBED_DOCUMENT_PREFIX). Weights download from huggingface.co on
+    # first use into the fastembed cache.
+    huggingface_embedding_model: str = "nomic-ai/nomic-embed-text-v1.5-Q"
 
     # ── LLM behaviour ────────────────────────────────────────────────────────
     llm_cache_path: Path = Field(default_factory=lambda: Path(".cache/llm.sqlite"))

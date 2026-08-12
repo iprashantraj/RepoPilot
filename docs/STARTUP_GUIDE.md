@@ -75,7 +75,7 @@ Notes:
 
 - Unit tests can run without provider keys.
 - Real repo indexing and tour generation need provider capacity.
-- Embeddings use `nomic-ai/nomic-embed-text-v1.5` through sentence-transformers and download on first use.
+- Embeddings use `nomic-ai/nomic-embed-text-v1.5-Q` through fastembed (ONNX, no torch) and download on first use.
 - `GITHUB_PAT` is optional unless you are exercising GitHub issue-context flows.
 - Leave the default local datastore settings unless you are pointing at external services:
 
@@ -261,7 +261,7 @@ make docker-up
 make db-migrate
 ```
 
-If first indexing is slow, check whether sentence-transformers is downloading embedding weights and whether the configured LLM provider is rate-limiting.
+If first indexing is slow, check whether fastembed is downloading embedding weights and whether the configured LLM provider is rate-limiting.
 
 ### "Internal Server Error" on submit (`POST /api/repos` returns 500)
 

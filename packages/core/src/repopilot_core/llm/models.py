@@ -7,7 +7,7 @@ This indirection is what makes the failover chain transparent — see
 
 Provider fallback chain in v1:
     Groq → Cerebras → Hugging Face (Inference Providers)
-Embeddings: sentence-transformers in-process (no HTTP, no daemon).
+Embeddings: fastembed in-process (ONNX; no HTTP, no daemon, no torch).
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ class ModelBinding:
 # The user can re-add HF explicitly when they have credits.
 #
 # EMBEDDINGS keeps the HUGGINGFACE ProviderName because that path is served
-# by the in-process sentence-transformers embedder (HF model weights, no HTTP,
+# by the in-process fastembed embedder (HF model weights, ONNX, no HTTP,
 # no credits burned). See LLMProvider.embed().
 # Model IDs verified against the LIVE Groq + Cerebras catalogs (2026-07-21):
 #   Groq     = {llama-3.3-70b-versatile, llama-3.1-8b-instant,
@@ -112,8 +112,8 @@ RESOLUTION: dict[ModelId, tuple[ModelBinding, ...]] = {
         ModelBinding(ProviderName.CEREBRAS, "gpt-oss-120b"),
         ModelBinding(ProviderName.CEREBRAS, "zai-glm-4.7"),
     ),
-    # Embeddings run in-process via sentence-transformers (HF model weights).
-    # physical_model is the HF model id passed to SentenceTransformer().
+    # Embeddings run in-process via fastembed (HF model weights, ONNX).
+    # physical_model is the HF model id passed to fastembed's TextEmbedding().
     # nomic-embed-text-v1.5 is 768-dim, matches the existing pgvector schema.
     ModelId.EMBEDDINGS: (ModelBinding(ProviderName.HUGGINGFACE, "nomic-ai/nomic-embed-text-v1.5"),),
 }

@@ -9,17 +9,15 @@ dependencies = [
     "structlog>=24.4",
     "httpx>=0.27",
     "tenacity>=9.0",
-    # Embeddings run in-process via sentence-transformers (HF model weights).
-    # No Ollama, no daemon. First call downloads weights into the HF hub cache.
-    "sentence-transformers>=3.0",
-    # torch arrives transitively via sentence-transformers; declared explicitly
-    # so the root [tool.uv.sources] CPU-index override binds (we never use a GPU,
-    # and the default Linux wheel drags in heavy NVIDIA CUDA wheels).
-    "torch>=2.0",
+    # Embeddings run in-process via fastembed (ONNX Runtime, HF model weights).
+    # No Ollama, no daemon, no torch. sentence-transformers served the same
+    # model but dragged torch in with it: ~2.5 GB of image and ~2 GB resident,
+    # which no free host will run. First call downloads weights into the
+    # fastembed cache. numpy is fastembed's own dep, named here because the
+    # embedder normalises vectors with it.
+    "fastembed>=0.4",
+    "numpy>=1.26",
     "huggingface-hub>=0.24",
-    # Embedding model nomic-ai/nomic-embed-text-v1.5 ships with remote code
-    # that we trust on first load; einops is its hard dep for matrix ops.
-    "einops>=0.8",
 ]
 
 [build-system]

@@ -21,16 +21,6 @@ repopilot-ingestion = { workspace = true }
 repopilot-agents = { workspace = true }
 repopilot-evals = { workspace = true }
 repopilot-api = { workspace = true }
-# torch is pulled in transitively (sentence-transformers). On Linux the default
-# PyPI wheel drags in heavy NVIDIA CUDA wheels (nvidia-cusparselt-cu13, …) that
-# flake on download in CI. We never use a GPU, so route torch through PyTorch's
-# CPU-only index on Linux. macOS PyPI wheels are already CPU-only, so leave them.
-torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
 
 [dependency-groups]
 dev = [
