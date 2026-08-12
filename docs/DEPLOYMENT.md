@@ -164,8 +164,10 @@ check before cloning, keeps one pasted monorepo from filling the container.
 
 ## Step 1 — Postgres on Neon
 
-1. Create a Neon project in the region nearest the API service (`us-west` to
-   match Render's `oregon` default in `render.yaml`).
+1. Create the Neon project and the Render services in the **same** region.
+   `render.yaml` ships with `singapore`; change both `region:` keys if your
+   Neon project lives elsewhere. Retrieval issues several queries per
+   question, so a cross-region database pays that round trip every time.
 2. `CREATE EXTENSION IF NOT EXISTS vector;` on the target database.
 3. Take the pooled connection string. `make_engine` rewrites `postgresql://`
    to `postgresql+psycopg://`, so paste it unchanged and keep `sslmode=require`.

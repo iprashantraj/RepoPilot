@@ -11,13 +11,16 @@
 # The free plan spins the service down after 15 minutes idle. The first request
 # after that pays a cold start (~40-60s) -- the weights are baked into the image
 # (see Dockerfile.render), so it is container boot, not a download.
+#
+# Region must match the Neon project's. Retrieval issues several queries per
+# question, so a cross-region database pays that round trip every time.
 
 services:
   - type: web
     name: repopilot-api
     runtime: docker
     plan: free
-    region: oregon
+    region: singapore
     dockerfilePath: ./infra/deploy/Dockerfile.render
     dockerContext: .
     healthCheckPath: /health
@@ -58,7 +61,7 @@ services:
   - type: keyvalue
     name: repopilot-redis
     plan: free
-    region: oregon
+    region: singapore
     # arq only needs the queue to outlive a job, not a restart.
     maxmemoryPolicy: noeviction
     ipAllowList: []  # private network only -- reachable from the API service
