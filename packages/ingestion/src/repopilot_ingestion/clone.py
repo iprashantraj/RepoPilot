@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import git
+import httpx
 import structlog
 
 log = structlog.get_logger(__name__)
@@ -79,6 +80,32 @@ def remote_head_sha(repo_url: str) -> str:
     raise RuntimeError(f"ls-remote returned no HEAD for {repo_url!r}: {output!r}")
 
 
+def remote_repo_size_kb(repo_url: str, *, github_pat: str | None = None) -> int | None:
+    """Repository size in KiB from the GitHub API, or ``None`` if unknown.
+
+    Asked before cloning: the clone is the one stage with no size bound, and on
+    a small host a large repository dies inside ``git clone`` rather than at the
+    line-count cap, which is checked after the scan. Unknown (rate limit, API
+    outage) means "do not block indexing" — the caller proceeds.
+    """
+    owner, name = parse_github_url(repo_url)
+    headers = {"Accept": "application/vnd.github+json"}
+    if github_pat:
+        headers["Authorization"] = f"Bearer {github_pat}"
+    try:
+        response = httpx.get(
+            f"https://api.github.com/repos/{owner}/{name}",
+            headers=headers,
+            timeout=10.0,
+        )
+        if response.status_code != 200:
+            return None
+        size = response.json().get("size")
+    except (httpx.HTTPError, ValueError):
+        return None
+    return int(size) if isinstance(size, int) else None
+
+
 @contextmanager
 def clone_to_tempdir(repo_url: str, *, root: Path | None = None) -> Iterator[CloneResult]:
     """Shallow-clone ``repo_url`` into a tempdir; clean up on exit.
@@ -113,4 +140,5 @@ __all__ = [
     "clone_to_tempdir",
     "parse_github_url",
     "remote_head_sha",
+    "remote_repo_size_kb",
 ]

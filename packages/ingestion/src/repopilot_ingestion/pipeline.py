@@ -31,6 +31,7 @@ from repopilot_ingestion.clone import (
     CloneResult,
     clone_to_tempdir,
     remote_head_sha,
+    remote_repo_size_kb,
 )
 from repopilot_ingestion.embed import EmbeddedChunk, embed_chunks
 from repopilot_ingestion.generic_chunk import (
@@ -71,6 +72,9 @@ class PipelineResult:
     loc_total: int | None = None
     chunk_count: int | None = None
     edge_count: int | None = None
+    # Set only when the reason is not derivable from the fields above (the
+    # pre-clone size guard, which rejects before any line count exists).
+    message: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,12 +132,25 @@ async def index_repo(
     engine = make_engine(settings)
     total_started = time.perf_counter()
     try:
+        # ``ingestion_max_repo_loc`` bounds what gets *indexed* and is checked
+        # after the scan, which is too late: on a small host the clone itself is
+        # what dies (OOM / disk) on a large repository. Ask GitHub for the size
+        # first and reject with something the reader can act on.
+        max_kb = settings.ingestion_max_repo_mb * 1024
+        size_kb = await asyncio.to_thread(
+            remote_repo_size_kb, repo_url, github_pat=settings.github_pat
+        )
+        if size_kb is not None and size_kb > max_kb:
+            log.warning("pipeline.too_large_remote", repo_url=repo_url, size_kb=size_kb, cap=max_kb)
+            return PipelineResult(
+                status="too_large",
+                message=(
+                    f"Repository is {size_kb // 1024} MB, over the "
+                    f"{settings.ingestion_max_repo_mb} MB indexing limit."
+                ),
+            )
+
         clone_started = time.perf_counter()
-        # ``ingestion_max_repo_loc`` bounds what gets *indexed*, and is checked
-        # after the scan below — nothing bounds what gets *downloaded* here.
-        # Accepted while this deployment is private (docs/STATUS.md, 2026-08-11),
-        # but this one also fires by accident: a large monorepo pasted in error
-        # is cloned in full before anything rejects it.
         with clone_to_tempdir(repo_url, root=settings.ingestion_clone_root) as clone:
             _log_stage("clone", clone_started, repo_url=repo_url)
             already = await repo_already_indexed(engine, repo_url=repo_url, head_sha=clone.head_sha)

@@ -250,7 +250,10 @@ class LiveRepoService:
         if status == "too_large":
             record.status = "error"
             record.progress = None
-            record.error = "Repository exceeds the configured indexing size limit."
+            record.error = (
+                str(payload.get("message") or "")
+                or "Repository exceeds the configured indexing size limit."
+            )
             return
         if status == "unsupported":
             record.status = "error"
@@ -300,7 +303,7 @@ class LiveRepoService:
             if result.status == "too_large":
                 record.status = "error"
                 record.progress = None
-                record.error = (
+                record.error = result.message or (
                     f"Repository has {result.loc_total or 0} indexable lines, exceeding the "
                     f"configured limit of {self.runtime.settings.ingestion_max_repo_loc}."
                 )

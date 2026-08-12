@@ -170,6 +170,11 @@ class Settings(BaseSettings):
     # ── Ingestion (Phase 1) ──────────────────────────────────────────────────
     ingestion_clone_root: Path = Field(default_factory=lambda: Path(".cache/clones"))
     ingestion_max_repo_loc: int = 200_000
+    # Checked against the GitHub API *before* cloning. ``ingestion_max_repo_loc``
+    # only bounds what gets indexed, and it is checked after the clone and scan
+    # — on the 512 MB Render free instance a 150 MB repository is killed during
+    # ``git clone`` long before anything reads that cap.
+    ingestion_max_repo_mb: int = Field(default=100, ge=1)
     ingestion_scan_workers: int = Field(default_factory=_default_scan_workers, ge=1, le=32)
     ingestion_max_file_bytes: int = Field(default=512_000, ge=1)
     ingestion_text_chunk_lines: int = Field(default=120, ge=1)

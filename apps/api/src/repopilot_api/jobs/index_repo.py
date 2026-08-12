@@ -71,6 +71,7 @@ async def index_repo(ctx: dict[str, Any], repo_url: str, session_id: str) -> dic
         "loc_total": result.loc_total,
         "chunk_count": result.chunk_count,
         "edge_count": result.edge_count,
+        "message": result.message,
     }
 
 
