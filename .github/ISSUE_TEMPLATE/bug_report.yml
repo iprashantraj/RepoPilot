@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Before filing: the [startup guide troubleshooting section](https://github.com/ayushkumar320/RepoPilot/blob/main/docs/STARTUP_GUIDE.md#troubleshooting)
+        Before filing: the [startup guide troubleshooting section](https://github.com/iprashantraj/RepoPilot/blob/main/docs/STARTUP_GUIDE.md#troubleshooting)
         covers the common first-run failures (Docker not running, port 5432 taken, missing provider key).
 
   - type: textarea

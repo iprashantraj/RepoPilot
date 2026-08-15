@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        [`docs/STATUS.md`](https://github.com/ayushkumar320/RepoPilot/blob/main/docs/STATUS.md)
+        [`docs/STATUS.md`](https://github.com/iprashantraj/RepoPilot/blob/main/docs/STATUS.md)
         lists what is already in flight and which scope decisions were made deliberately.
 
   - type: textarea

@@ -221,7 +221,7 @@ Sign up at [console.groq.com](https://console.groq.com/) and create an API key. 
 ### 3. Set it up
 
 ```bash
-git clone https://github.com/ayushkumar320/RepoPilot.git
+git clone https://github.com/iprashantraj/RepoPilot.git
 cd RepoPilot
 cp .env.example .env      # then put your key in GROQ_API_KEY=
 make setup                # uv sync + npm install
