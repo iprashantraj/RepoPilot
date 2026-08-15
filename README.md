@@ -6,7 +6,7 @@ Reading an unfamiliar repository is not a search problem. The hard part is not f
 
 RepoPilot is built around that: **it asks why you are here before it analyzes anything**, and every downstream step adapts to the answer.
 
-> Current status: launch-ready. Run it locally with the [startup guide](docs/STARTUP_GUIDE.md); deploy it with the [deployment guide](docs/DEPLOYMENT.md). Where the project stands day to day is in [docs/STATUS.md](docs/STATUS.md).
+> **There is no hosted instance — RepoPilot runs on your machine.** It is open source because we are not operating it as a service: you clone it, bring your own free Groq key, and everything stays local. [Quickstart](#run-it-locally) below, full runbook in the [startup guide](docs/STARTUP_GUIDE.md). Self-hosting on a server is possible but optional — see the [deployment guide](docs/DEPLOYMENT.md). Where the project stands day to day is in [docs/STATUS.md](docs/STATUS.md).
 
 ---
 
@@ -202,20 +202,44 @@ These are enforced in review and CI, not aspirational:
 
 ## Run it locally
 
-Prerequisites: Python 3.12+, Node 22+, Docker (for Postgres and Redis), and a [Groq API key](https://console.groq.com/).
+Everything runs on your machine. The only account you need is a free Groq key.
+
+### 1. Install the toolchain
+
+| Need | Version | Install |
+|---|---|---|
+| Python | 3.12 (`<3.14`) | Installed for you by `uv` — no system Python required |
+| [uv](https://docs.astral.sh/uv/) | latest | `curl -LsSf https://astral.sh/uv/install.sh \| sh` (macOS/Linux) · `winget install astral-sh.uv` (Windows) |
+| Node.js | 22 | [nodejs.org](https://nodejs.org/) or `nvm install 22` |
+| Docker | any current | [Docker Desktop](https://www.docker.com/products/docker-desktop/) — must be **running**, it hosts Postgres and Redis |
+| Git | any | preinstalled on macOS/Linux |
+
+### 2. Get a free LLM key
+
+Sign up at [console.groq.com](https://console.groq.com/) and create an API key. The free tier is enough for real tours; it rate-limits on large repositories. Optional extras: a [Cerebras](https://cloud.cerebras.ai/) key and a [Hugging Face token](https://huggingface.co/settings/tokens) act as fallbacks when Groq returns 429.
+
+### 3. Set it up
 
 ```bash
-make setup
-cp .env.example .env     # add GROQ_API_KEY
-make services            # Postgres + pgvector, Redis, migrations
-make dev                 # API on :8000, web on :3000
+git clone https://github.com/ayushkumar320/RepoPilot.git
+cd RepoPilot
+cp .env.example .env      # then put your key in GROQ_API_KEY=
+make setup                # uv sync + npm install
+make services             # Postgres + pgvector and Redis, then DB migrations
+make dev                  # API on :8000, web on :3000
 ```
 
-Open `http://127.0.0.1:3000`. Full walkthrough in the [startup guide](docs/STARTUP_GUIDE.md).
+Open `http://127.0.0.1:3000` and paste a public GitHub repo URL.
 
-Sign-in is optional locally: leave `AUTH_GOOGLE_ID` and `AUTH_GITHUB_ID` empty and the app runs anonymously. Set either one (plus `AUTH_SECRET`) and it is gated behind sign-in, with tours following the account. Callback URL: `<web-origin>/api/auth/callback/{google,github}`.
+Prefer not to install any of it? The repo ships a [devcontainer](.devcontainer/devcontainer.json) — open it in VS Code or a GitHub Codespace, and `uv`, Node 22, Docker and the dependencies are set up for you. You still supply the Groq key and run `make services && make dev`.
 
-On first run, sentence-transformer weights (~250 MB) and the reranker (~91 MB) download into the local Hugging Face cache.
+**First run downloads models.** The embedder (~130 MB) and the reranker (~91 MB) land in `~/.cache/huggingface` on the first indexing job, so the first repository is slower than every one after it. Start with something small — `pallets/flask`, `encode/httpx` — rather than a monorepo; the ingester rejects repos over 100 MB or 200k lines by design.
+
+`apps/web/.env.local` is **optional**: without it the web app proxies to `http://127.0.0.1:8000` and runs anonymously. Copy `apps/web/.env.local.example` only if you want Google/GitHub sign-in with tours following an account, or if your API listens somewhere else. Sign-in stays off until `AUTH_GOOGLE_ID` or `AUTH_GITHUB_ID` is set; callback URL is `<web-origin>/api/auth/callback/{google,github}`.
+
+Whatever key you configure is the one that gets spent — RepoPilot has no spend ceiling and no metering worth the name locally. That is fine for your own key and not fine if you expose the API to strangers (see [docs/STATUS.md](docs/STATUS.md)).
+
+Stuck? The [startup guide](docs/STARTUP_GUIDE.md) has the full runbook and a troubleshooting section covering the failures people actually hit — Docker not running, port 5432 taken, a stale database, and a dev-only 500 on submit.
 
 ### Development
 
@@ -315,6 +339,7 @@ Stated plainly, because the project's whole argument is about not overclaiming:
 | [docs/03_ARCHITECTURE.md](docs/03_ARCHITECTURE.md) | Agent topology, state schema, tools, verifier |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Production containers, environment, migrations, release sequence |
 | [docs/AUDIT_REPORT.md](docs/AUDIT_REPORT.md) | Full engineering audit: 21 findings, what was fixed, what was accepted and why |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Dev loop, the rules that get PRs rejected, commit style, what is worth working on |
 | [CLAUDE.md](CLAUDE.md) | Project rules and contributor workflow |
 | [docs/archive/](docs/archive/) | Product thesis and historical stack rationale |
 

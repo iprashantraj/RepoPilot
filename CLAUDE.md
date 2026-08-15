@@ -16,6 +16,7 @@ The distinguishing bet: **before analyzing anything, the system captures pre-con
 |---|---|
 | Where the project stands right now | [`docs/STATUS.md`](docs/STATUS.md) |
 | How to run the project locally | [`docs/STARTUP_GUIDE.md`](docs/STARTUP_GUIDE.md) |
+| How outside contributors are expected to work | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 | Agent topology, state schema, tools, verifier | [`docs/03_ARCHITECTURE.md`](docs/03_ARCHITECTURE.md) |
 | Historical: product thesis, tech-stack rationale | [`docs/archive/`](docs/archive/) |
 

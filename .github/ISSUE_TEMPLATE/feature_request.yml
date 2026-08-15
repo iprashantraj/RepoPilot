@@ -1,0 +1,34 @@
+name: Feature request
+description: Propose a change to what RepoPilot does
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        [`docs/STATUS.md`](https://github.com/ayushkumar320/RepoPilot/blob/main/docs/STATUS.md)
+        lists what is already in flight and which scope decisions were made deliberately.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that RepoPilot makes hard or impossible?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you want instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: grounding
+    attributes:
+      label: How it stays grounded
+      description: >
+        Optional, but it is the question the PR will face. RepoPilot's rule is
+        that facts come from the AST, retrieval and metrics — the model only
+        narrates. If your idea needs the model to assert something new, say how
+        a claim from it would carry a `file:line` ref and pass the verifier.

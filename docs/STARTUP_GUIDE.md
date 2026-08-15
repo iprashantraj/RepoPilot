@@ -1,14 +1,16 @@
 # RepoPilot Startup Guide
 
-This is the simple local runbook. In normal development you only need four commands.
+This is the local runbook. RepoPilot is not hosted anywhere — it runs on your
+machine, against your own provider key. In normal development you only need
+four commands.
 
 ## The Short Version
 
 From the repo root:
 
 ```bash
+cp .env.example .env      # then set GROQ_API_KEY=...
 make setup
-cp .env.example .env
 make services
 make dev
 ```
@@ -24,16 +26,25 @@ That is it. `make dev` runs both:
 - Backend API: `http://127.0.0.1:8000`
 - Frontend app: `http://127.0.0.1:3000`
 
-For real tours, put at least one LLM provider key in `.env` before using the app.
+The app starts without a provider key, but every tour and question fails until
+at least one is set — put a key in `.env` first. The frontend needs no
+configuration at all for the default setup; `apps/web/.env.local` is only for
+sign-in or a non-default API address.
 
 ## Prerequisites
 
-- Python 3.12
-- `uv`
-- Node.js 20+
-- npm
-- Docker Desktop or Docker Engine
-- Git
+| Tool | Version | Notes |
+|---|---|---|
+| [uv](https://docs.astral.sh/uv/) | latest | `curl -LsSf https://astral.sh/uv/install.sh \| sh`, or `winget install astral-sh.uv` on Windows |
+| Python | 3.12 (`<3.14`) | `uv` downloads and pins it via `.python-version`; no system Python needed |
+| Node.js + npm | 22 (what CI runs) | `nvm install 22` |
+| Docker | Desktop or Engine | Must be **running** before `make services` — it hosts Postgres and Redis |
+| Git | any | |
+
+At least one LLM provider key. [Groq](https://console.groq.com/) is free and is
+the default first choice; [Cerebras](https://cloud.cerebras.ai/) and a
+[Hugging Face token](https://huggingface.co/settings/tokens) are optional
+fallbacks used when Groq rate-limits.
 
 ## Commands You Actually Use
 
@@ -128,11 +139,13 @@ request as a fresh anonymous session and no history is found.
 
 ## 3. Start Local Services
 
+Start Docker first, then:
+
 ```bash
 make services
 ```
 
-This starts:
+This starts, waits until both containers report healthy, then runs migrations:
 
 - Postgres 16 + pgvector on `localhost:5432`
 - Redis on `localhost:6379`
@@ -179,16 +192,25 @@ http://127.0.0.1:8000/docs
 
 The local API indexes submitted repositories in-process through the runtime service layer. No separate worker process is required for the normal dev flow.
 
-## 6. Use The App Locally
+## 5. Use The App Locally
 
 1. Paste a public Python GitHub repo URL.
 2. Wait for indexing to finish.
 3. Enter what you are trying to learn or change in the repo.
 4. Generate a tour or ask grounded follow-up questions.
 
-Good smoke-test repos are small-to-medium Python projects. Very large repos will depend more heavily on model-provider quota and first-run embedding downloads.
+Good smoke-test repos are small-to-medium Python projects — `pallets/flask` and
+`encode/httpx` are the ones used during development. Very large repos depend
+more heavily on model-provider quota and first-run embedding downloads.
+Anything over 100 MB is rejected before the clone starts, and anything over
+200k lines is rejected after it (`INGESTION_MAX_REPO_MB` /
+`INGESTION_MAX_REPO_LOC`).
 
-## 7. Run Checks
+**First run is the slow one.** The fastembed embedder (~130 MB) and the
+cross-encoder reranker (~91 MB) download into `~/.cache/huggingface` during the
+first indexing job. Later repositories reuse them.
+
+## 6. Run Checks
 
 Before committing or handing off:
 
@@ -246,6 +268,23 @@ does not.
 Evals no longer run in CI. The retrieval artifact gate and the `eval-pr` / `eval-main` workflows were removed on 2026-08-08, now that the RAG phases they guarded are done. Run the bench locally (see [`evals/`](../evals/)) when a change could move ranking.
 
 ## Troubleshooting
+
+### First-run failures
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `make: uv: No such file or directory` | `uv` not installed, or installed into a shell that has not been reopened | `curl -LsSf https://astral.sh/uv/install.sh \| sh`, then open a new terminal |
+| `Cannot connect to the Docker daemon` | Docker is not running | Start Docker Desktop and re-run `make services` |
+| `Bind for 0.0.0.0:5432 failed: port is already allocated` | Another Postgres (Homebrew, an older project) owns the port | Stop it, or change the host port in `docker-compose.yml` and `POSTGRES_DSN` to match |
+| `connection to server at "localhost", port 5432 failed` during `make services` | Postgres is not up yet | `make docker-up` waits for the healthcheck; if it still fails, `make docker-down && make services` — note `docker-down` passes `-v`, so it **deletes the local database volume** |
+| App loads, indexing works, every answer errors | No provider key | Set `GROQ_API_KEY` in the repo-root `.env` (not `apps/web/.env.local`) and restart the API |
+| Answers stop mid-tour with a 429 | Free-tier provider quota | Wait out the window, or add `CEREBRAS_API_KEY` / `HUGGINGFACE_API_KEY` as fallbacks |
+| `EADDRINUSE :3000` or `:8000` | A previous `make dev` did not exit | Kill it: `lsof -ti:3000,8000 \| xargs kill` |
+
+`.env` lives at the repo root and is read by the Python side (API, ingestion,
+agents). `apps/web/.env.local` is read only by Next.js, and only matters for
+sign-in or a non-default `API_PROXY_TARGET`. Putting a provider key in the
+web env does nothing.
 
 If `uv` tries to use a home cache that the sandbox cannot read, use the workspace cache:
 

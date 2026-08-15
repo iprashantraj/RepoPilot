@@ -1,0 +1,30 @@
+{
+  "name": "RepoPilot",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "22" },
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  // Postgres and Redis still come from docker-compose.yml, run inside this
+  // container — so localhost:5432 means the same thing here as on a host
+  // machine and .env.example needs no devcontainer-specific variant.
+  "postCreateCommand": ".devcontainer/post-create.sh",
+  "forwardPorts": [3000, 8000, 5432, 6379],
+  "portsAttributes": {
+    "3000": { "label": "web" },
+    "8000": { "label": "api" }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "charliermarsh.ruff",
+        "ms-python.python",
+        "ms-python.mypy-type-checker",
+        "dbaeumer.vscode-eslint"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "${containerWorkspaceFolder}/.venv/bin/python"
+      }
+    }
+  }
+}

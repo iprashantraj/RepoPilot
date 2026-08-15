@@ -1,0 +1,74 @@
+name: Bug report
+description: Something broke while running RepoPilot locally
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: the [startup guide troubleshooting section](https://github.com/ayushkumar320/RepoPilot/blob/main/docs/STARTUP_GUIDE.md#troubleshooting)
+        covers the common first-run failures (Docker not running, port 5432 taken, missing provider key).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead.
+      placeholder: |
+        Pasted https://github.com/pallets/flask, indexing finished, then every
+        question came back with "…".
+    validations:
+      required: true
+
+  - type: input
+    id: repo-url
+    attributes:
+      label: Repository URL you were touring
+      description: Leave blank if the failure was before that step.
+      placeholder: https://github.com/pallets/flask
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where it broke
+      options:
+        - Setup / install (make setup, make services)
+        - Indexing a repository
+        - Answers and tours
+        - Web UI
+        - Sign-in
+        - Tests / CI
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >
+        The API terminal output is usually the useful one. Redact your keys —
+        this is a public issue.
+      render: text
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: |
+        Output of:
+        ```
+        uv run python -V && node -v && docker --version && uname -sm
+        ```
+      render: text
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: provider
+    attributes:
+      label: Provider keys configured
+      options:
+        - label: GROQ_API_KEY
+        - label: CEREBRAS_API_KEY
+        - label: HUGGINGFACE_API_KEY
+        - label: None
