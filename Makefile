@@ -18,7 +18,7 @@ help:
 	@echo "  cov          pytest with coverage gate (80%)"
 	@echo "  ci           lint + typecheck + test (matches GitHub Actions)"
 	@echo "  precommit    run pre-commit on all files"
-	@echo "  docker-up    docker compose up -d (Postgres+pgvector, Redis)"
+	@echo "  docker-up    start Postgres+pgvector and Redis, wait until healthy"
 	@echo "  docker-down  docker compose down -v"
 	@echo "  resummarise        re-run summaries for REPO=<id> (or REPO=--all)"
 	@echo "  resummarise-check  report placeholder summaries, write nothing"
@@ -90,7 +90,7 @@ precommit:
 	uv run pre-commit run --all-files
 
 docker-up:
-	docker compose up -d
+	docker compose up -d --wait
 
 docker-down:
 	docker compose down -v
