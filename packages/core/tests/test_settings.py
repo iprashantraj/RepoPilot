@@ -26,7 +26,15 @@ def test_settings_loads_from_env_example() -> None:
     assert settings.repopilot_env == "development"
     assert settings.huggingface_base_url.startswith("https://router.huggingface.co/")
     assert settings.llm_max_429_retries == 5
-    assert settings.huggingface_embedding_model == "nomic-ai/nomic-embed-text-v1.5"
+
+    # The example must ship the *same* embedder as the code default. Drift here
+    # is silent and expensive: the example once pinned the full-precision build
+    # while the default was the quantized one, so anyone who copied the template
+    # downloaded 520MB of weights instead of 130MB and never knew.
+    assert (
+        settings.huggingface_embedding_model
+        == Settings.model_fields["huggingface_embedding_model"].default
+    )
 
 
 def test_production_requires_a_non_default_session_secret() -> None:
